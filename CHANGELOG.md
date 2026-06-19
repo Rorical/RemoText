@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.5] — 2026-06-19
+
+### Fixed
+
+- Background session manager now handles local requests concurrently, so a long-running `exec` no longer blocks session health checks or follow-up commands.
+- Stale session health checks now time out instead of hanging foreground commands.
+- Client endpoints are explicitly closed after request completion to avoid noisy iroh endpoint-drop warnings.
+
 ## [0.3.4] — 2026-06-19
 
 ### Fixed
