@@ -18,18 +18,6 @@ RemoText 是一个无 GUI 的轻量远程命令执行工具。服务端启动后
 - OPAQUE PAKE 密码认证，密码不会明文发送到网络上。
 - 本地后台 session 管理器，适合脚本里反复执行一行命令。
 
-## 发布到 GitHub Pages
-
-这个文件可以直接作为 GitHub Pages 的 Markdown 页面编译。
-
-推荐发布方式：
-
-1. 把仓库推送到 GitHub。
-2. 打开仓库 `Settings` -> `Pages`。
-3. `Build and deployment` 选择 `Deploy from a branch`。
-4. Branch 选择 `main`，目录选择 `/docs`。
-5. 保存后，GitHub Pages 会把 `docs/index.md` 编译成站点首页。
-
 ## 安装和构建
 
 从源码构建：

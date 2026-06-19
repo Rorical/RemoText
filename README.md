@@ -33,8 +33,8 @@ REMOTEXT_ADDR=<address> REMOTEXT_PASSWORD=<password> remotext exec -- uname -a
 
 ## Documents
 
+- [RemoText 使用说明](docs/index.md): user-facing setup and command guide.
 - `docs/requirements.md`: product requirements and acceptance criteria.
-- `docs/index.md`: GitHub Pages-ready user guide.
 - `docs/technical-design.md`: architecture and implementation design.
 - `docs/protocol.md`: protocol framing, handshake, command, and file transfer messages.
 - `docs/cli.md`: CLI behavior and examples.
