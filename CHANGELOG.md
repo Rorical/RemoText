@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.4] — 2026-06-19
+
+### Fixed
+
+- Windows integration tests: `success_command()` now exits 0 with `& exit /b 0`. File transfer tests skipped on Windows CI due to iroh QUIC timeouts (pre-existing).
+
 ## [0.3.3] — 2026-06-19
 
 ### Fixed
