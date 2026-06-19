@@ -90,7 +90,7 @@ fn exec_args() -> Vec<&'static str> {
         "--",
         "cmd",
         "/C",
-        "<NUL set /p dummy=cli-session",
+        "<NUL set /p dummy=cli-session& exit /b 0",
     ]
 }
 
