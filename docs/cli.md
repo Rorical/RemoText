@@ -6,6 +6,7 @@
 remotext server --password <password>
 remotext connect --addr <address> --password <password>
 remotext exec --addr <address> --password <password> -- <command> [args...]
+remotext exec --no-session --addr <address> --password <password> -- <command> [args...]
 remotext put --addr <address> --password <password> <local> <remote>
 remotext get --addr <address> --password <password> <remote> <local>
 ```
@@ -18,21 +19,22 @@ remotext get --addr <address> --password <password> <remote> <local>
 remotext server --password correct-horse-battery-staple
 ```
 
-Expected future behavior:
+Behavior:
 
 - Load or create the server iroh identity.
 - Bind the RemoText iroh endpoint.
-- Print a connection address or ticket.
+- Print an `rt1_` connection address ticket.
 - Wait for authenticated clients.
 
-Example future output:
+Example output:
 
 ```text
 RemoText server
 network: iroh
 protocol: remotext/1
+name: remotext
 address: rt1_...
-password: configured
+data-dir: /path/to/RemoText
 status: ready
 ```
 
@@ -42,11 +44,11 @@ status: ready
 remotext connect --addr rt1_... --password correct-horse-battery-staple
 ```
 
-Expected future behavior:
+Behavior:
 
 - Dial the server with iroh.
-- Authenticate once with the provided password.
 - Start or reuse a local session manager.
+- Authenticate once with the provided password.
 - Keep the connection alive for the idle timeout.
 
 ## One-Line Command Execution
@@ -79,6 +81,8 @@ remotext exec -- powershell -NoProfile -Command "Get-ChildItem Env:"
 
 The `--` separator is important. Everything after it belongs to the remote command and is not parsed as RemoText flags.
 
+Use `--no-session` to bypass the local background connection manager and open a direct one-shot iroh connection.
+
 ## File Upload
 
 ```bash
@@ -106,13 +110,12 @@ Supported input methods:
 
 - `--password <password>` for direct manual testing.
 - `REMOTEXT_PASSWORD=<password>` for script-friendly use.
-- Future interactive prompt for human use without exposing the password in command history.
 
 Avoid putting passwords directly on shared systems where process lists or shell history are visible to other users.
 
 ## Exit Codes
 
-Planned exit code behavior:
+Exit code behavior:
 
 - `0`: operation succeeded.
 - `1`: generic local failure.
@@ -121,7 +124,7 @@ Planned exit code behavior:
 - `11`: authentication failed.
 - `12`: protocol mismatch.
 - `20`: remote command failed to start.
-- Remote command non-zero exit should return the same exit code when it fits the local platform range.
+- Remote command non-zero exit returns the same exit code when it fits the local platform range.
 
 ## Background Session Behavior
 
@@ -137,4 +140,4 @@ remotext exec
   -> keep manager alive until idle timeout
 ```
 
-This gives scripts a simple `sshpass`-like command while repeated calls avoid reconnecting each time.
+This gives scripts a simple `sshpass`-like command while repeated calls avoid reconnecting each time. If the session manager cannot be reached, `exec`, `put`, and `get` fall back to a direct iroh connection.

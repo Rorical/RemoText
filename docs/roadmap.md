@@ -2,7 +2,7 @@
 
 ## Milestone 0: Project Scaffold
 
-Status: current.
+Status: completed.
 
 Deliverables:
 
@@ -12,6 +12,8 @@ Deliverables:
 - Requirements and technical documents written.
 
 ## Milestone 1: iroh Connectivity
+
+Status: completed.
 
 Deliverables:
 
@@ -23,6 +25,8 @@ Deliverables:
 
 ## Milestone 2: Authentication
 
+Status: completed with HMAC challenge-response. PAKE remains a hardening option.
+
 Deliverables:
 
 - Password-based challenge-response or PAKE handshake.
@@ -32,15 +36,19 @@ Deliverables:
 
 ## Milestone 3: Direct Command Execution
 
+Status: completed.
+
 Deliverables:
 
 - `remotext exec` runs commands without the background session manager.
 - Stdout and stderr stream independently.
 - Exit code is propagated to the client.
-- Ctrl+C cancellation is implemented.
+- Cancellation is implemented through the protocol and CLI handling.
 - Windows, Linux, and macOS command examples are tested.
 
 ## Milestone 4: File Transfer
+
+Status: completed for single-file streaming upload and download.
 
 Deliverables:
 
@@ -51,12 +59,14 @@ Deliverables:
 
 ## Milestone 5: Background Session Manager
 
+Status: completed with localhost TCP plus random session token.
+
 Deliverables:
 
 - Local per-user session manager starts automatically.
 - Repeated one-line commands reuse authenticated connections.
 - Idle keepalive timeout works.
-- Unix socket and Windows named pipe permissions are validated.
+- Unix socket and Windows named pipe variants remain optional future hardening.
 
 ## Milestone 6: Service And Release Packaging
 

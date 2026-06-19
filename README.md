@@ -1,8 +1,8 @@
 # RemoText
 
-RemoText is a planned lightweight, portable remote command execution agent written in Rust. It uses `iroh` as the network layer so a client can connect by a server-provided address or ticket instead of manually managing public IPs, port forwarding, or VPNs.
+RemoText is a lightweight, portable remote command execution agent written in Rust. It uses `iroh` as the network layer so a client can connect by a server-provided address ticket instead of manually managing public IPs, port forwarding, or VPNs.
 
-The current repository is an initialized Rust project with a stable CLI scaffold and detailed requirements and design documents. The iroh runtime, authentication protocol, command execution, and file transfer implementation are intentionally still marked as pending.
+The current implementation provides iroh server and client runtime, password-based challenge-response authentication, remote command execution, streaming file upload/download, cancellation, and a local background session manager for repeated one-line commands.
 
 ## Target Capabilities
 
@@ -20,6 +20,7 @@ The current repository is an initialized Rust project with a stable CLI scaffold
 remotext server --password <password>
 remotext connect --addr <address> --password <password>
 remotext exec --addr <address> --password <password> -- <command> [args...]
+remotext exec --no-session --addr <address> --password <password> -- <command> [args...]
 remotext put --addr <address> --password <password> <local> <remote>
 remotext get --addr <address> --password <password> <remote> <local>
 ```
@@ -38,11 +39,12 @@ REMOTEXT_ADDR=<address> REMOTEXT_PASSWORD=<password> remotext exec -- uname -a
 - `docs/cli.md`: CLI behavior and examples.
 - `docs/cross-platform.md`: Windows, Linux, and macOS implementation notes.
 - `docs/security.md`: security model, authentication, secrets, and hardening requirements.
-- `docs/roadmap.md`: milestone plan from scaffold to usable releases.
+- `docs/roadmap.md`: milestone plan and remaining hardening work.
 
 ## Development
 
 ```bash
 cargo check
+cargo test
 cargo run -- --help
 ```

@@ -2,7 +2,7 @@
 
 ## Status
 
-This document defines the intended RemoText protocol shape. It is a draft and should be versioned before the first interoperable release.
+This document defines the current RemoText protocol shape. The first interoperable version uses ALPN `remotext/1` and postcard-encoded length-prefixed frames.
 
 ## Transport
 
@@ -15,14 +15,10 @@ This document defines the intended RemoText protocol shape. It is a draft and sh
 
 Each frame should contain:
 
-- Magic or protocol marker for early validation.
-- Protocol version.
-- Request id.
-- Message type.
-- Payload length.
-- Payload bytes.
+- 4-byte big-endian payload length.
+- Postcard-encoded `Message` payload.
 
-The exact encoding is not finalized. Use a binary encoding for runtime messages and reserve JSON for diagnostics or CLI `--json` output.
+The payload contains the message type through serde enum tagging.
 
 ## Connection Handshake
 
@@ -32,7 +28,7 @@ Planned sequence:
 client -> server: iroh connect with ALPN remotext/1
 server -> client: ServerHello(version, server_nonce, server_identity, auth_params)
 client -> server: ClientHello(version, client_nonce, auth_proof, client_caps)
-server -> client: AuthResult(session_id, server_caps) or AuthFailure(reason)
+server -> client: Response(...) or Response(Error(...))
 ```
 
 The authentication proof must bind the password-derived secret to:
@@ -59,6 +55,14 @@ Initial capability flags:
 - `session.keepalive`: reuse authenticated sessions.
 
 ## Command Execution Messages
+
+The current implementation uses these message variants:
+
+- `Request::Exec` to start a command.
+- `Response::ExecStarted` once the child process starts.
+- `Response::ExecOutput` for stdout and stderr chunks.
+- `Message::Cancel` to request cancellation.
+- `Response::ExecExit` for the final status.
 
 ### ExecRequest
 

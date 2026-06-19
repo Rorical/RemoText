@@ -1,13 +1,17 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, process::ExitCode};
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
-
-const NETWORK_LAYER: &str = "iroh";
-const PROTOCOL_ALPN: &str = "remotext/1";
+use remotext::{
+    NETWORK_LAYER, PROTOCOL_ALPN_STR,
+    client::Client,
+    server::{NetworkMode, Server, ServerConfig},
+    session, ticket,
+};
+use tokio::io::{self};
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<ExitCode> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .without_time()
@@ -15,13 +19,16 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Server(args) => run_server(args).await,
-        Commands::Connect(args) => run_connect(args).await,
-        Commands::Exec(args) => run_exec(args).await,
-        Commands::Put(args) => run_put(args).await,
-        Commands::Get(args) => run_get(args).await,
-    }
+    let code = match cli.command {
+        Commands::Server(args) => run_server(args).await?,
+        Commands::Connect(args) => run_connect(args).await?,
+        Commands::Exec(args) => run_exec(args).await?,
+        Commands::Put(args) => run_put(args).await?,
+        Commands::Get(args) => run_get(args).await?,
+        Commands::Session(args) => run_session(args).await?,
+    };
+
+    Ok(ExitCode::from(code))
 }
 
 #[derive(Debug, Parser)]
@@ -29,7 +36,7 @@ async fn main() -> Result<()> {
     name = "remotext",
     version,
     about = "Portable remote command execution agent over iroh",
-    long_about = "RemoText is a planned no-GUI, cross-platform remote command and file transfer agent. The current binary provides the stable CLI surface while the iroh transport runtime is implemented."
+    long_about = "RemoText is a no-GUI, cross-platform remote command and file transfer agent over iroh."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -40,7 +47,7 @@ struct Cli {
 enum Commands {
     /// Run this machine as a controllable RemoText server.
     Server(ServerArgs),
-    /// Open or warm a persistent client connection to a server.
+    /// Authenticate and verify connectivity to a server.
     Connect(ConnectArgs),
     /// Execute one command on a remote server.
     Exec(ExecArgs),
@@ -48,6 +55,9 @@ enum Commands {
     Put(PutArgs),
     /// Download a remote file from the server.
     Get(GetArgs),
+    /// Internal background client session process.
+    #[command(name = "__session", hide = true)]
+    Session(SessionArgs),
 }
 
 #[derive(Debug, Args)]
@@ -56,13 +66,17 @@ struct ServerArgs {
     #[arg(long, env = "REMOTEXT_PASSWORD", value_name = "PASSWORD")]
     password: String,
 
-    /// Friendly server name shown in client-side session lists.
+    /// Friendly server name shown in logs and status output.
     #[arg(long, default_value = "remotext", value_name = "NAME")]
     name: String,
 
-    /// Directory for server identity, session state, and receive staging files.
+    /// Directory for server identity and receive staging files.
     #[arg(long, value_name = "DIR")]
     data_dir: Option<PathBuf>,
+
+    /// Disable relay and discovery services. Useful for local tests and LAN-only operation.
+    #[arg(long)]
+    local_only: bool,
 }
 
 #[derive(Debug, Args)]
@@ -70,7 +84,11 @@ struct ConnectArgs {
     #[command(flatten)]
     endpoint: EndpointArgs,
 
-    /// Keep the local background connection alive for this many seconds while idle.
+    /// Disable relay and discovery services for the local client endpoint.
+    #[arg(long)]
+    local_only: bool,
+
+    /// Keep the local background connection alive for this many idle seconds.
     #[arg(long, default_value_t = 300, value_name = "SECONDS")]
     keepalive_secs: u64,
 }
@@ -80,7 +98,15 @@ struct ExecArgs {
     #[command(flatten)]
     endpoint: EndpointArgs,
 
-    /// Keep the local background connection alive for this many seconds after the command.
+    /// Disable relay and discovery services for the local client endpoint.
+    #[arg(long)]
+    local_only: bool,
+
+    /// Bypass the background connection manager and connect directly.
+    #[arg(long)]
+    no_session: bool,
+
+    /// Keep the local background connection alive for this many idle seconds.
     #[arg(long, default_value_t = 300, value_name = "SECONDS")]
     keepalive_secs: u64,
 
@@ -93,6 +119,18 @@ struct ExecArgs {
 struct PutArgs {
     #[command(flatten)]
     endpoint: EndpointArgs,
+
+    /// Disable relay and discovery services for the local client endpoint.
+    #[arg(long)]
+    local_only: bool,
+
+    /// Bypass the background connection manager and connect directly.
+    #[arg(long)]
+    no_session: bool,
+
+    /// Keep the local background connection alive for this many idle seconds.
+    #[arg(long, default_value_t = 300, value_name = "SECONDS")]
+    keepalive_secs: u64,
 
     /// Local file path to upload.
     #[arg(value_name = "LOCAL")]
@@ -108,6 +146,18 @@ struct GetArgs {
     #[command(flatten)]
     endpoint: EndpointArgs,
 
+    /// Disable relay and discovery services for the local client endpoint.
+    #[arg(long)]
+    local_only: bool,
+
+    /// Bypass the background connection manager and connect directly.
+    #[arg(long)]
+    no_session: bool,
+
+    /// Keep the local background connection alive for this many idle seconds.
+    #[arg(long, default_value_t = 300, value_name = "SECONDS")]
+    keepalive_secs: u64,
+
     /// Remote source path.
     #[arg(value_name = "REMOTE")]
     remote: String,
@@ -119,7 +169,7 @@ struct GetArgs {
 
 #[derive(Debug, Args)]
 struct EndpointArgs {
-    /// Server address or ticket printed by `remotext server`.
+    /// Server address ticket printed by `remotext server`.
     #[arg(long, env = "REMOTEXT_ADDR", value_name = "ADDR")]
     addr: String,
 
@@ -128,72 +178,192 @@ struct EndpointArgs {
     password: String,
 }
 
-async fn run_server(args: ServerArgs) -> Result<()> {
+#[derive(Debug, Args)]
+struct SessionArgs {
+    /// Server address ticket printed by `remotext server`.
+    #[arg(long, env = "REMOTEXT_ADDR", value_name = "ADDR")]
+    addr: String,
+
+    /// Shared password inherited from the foreground client command.
+    #[arg(long, env = "REMOTEXT_PASSWORD", value_name = "PASSWORD")]
+    password: String,
+
+    /// Base64url-encoded local session token.
+    #[arg(long, value_name = "TOKEN")]
+    token: String,
+
+    /// Path where the background process writes its local listener metadata.
+    #[arg(long, value_name = "FILE")]
+    session_file: PathBuf,
+
+    /// Keep the local background connection alive for this many idle seconds.
+    #[arg(long, default_value_t = 300, value_name = "SECONDS")]
+    keepalive_secs: u64,
+
+    /// Disable relay and discovery services for the local client endpoint.
+    #[arg(long)]
+    local_only: bool,
+}
+
+async fn run_server(args: ServerArgs) -> Result<u8> {
+    let server = Server::bind(ServerConfig {
+        password: args.password,
+        name: args.name,
+        data_dir: args.data_dir,
+        network_mode: network_mode(args.local_only),
+    })
+    .await?;
+
     println!("RemoText server");
     println!("network: {NETWORK_LAYER}");
-    println!("protocol: {PROTOCOL_ALPN}");
-    println!("name: {}", args.name);
-    println!("password: {}", describe_secret(&args.password));
-    println!(
-        "data-dir: {}",
-        args.data_dir
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "<platform default>".to_string())
-    );
-    println!("address: <pending iroh node ticket>");
-    println!("status: iroh server runtime is not implemented yet; see docs/technical-design.md");
+    println!("protocol: {PROTOCOL_ALPN_STR}");
+    println!("name: {}", server.name());
+    println!("address: {}", server.ticket()?);
+    println!("data-dir: {}", server.data_dir().display());
+    println!("status: ready");
 
-    Ok(())
+    server
+        .run_until(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await?;
+
+    Ok(0)
 }
 
-async fn run_connect(args: ConnectArgs) -> Result<()> {
-    print_endpoint("connect", &args.endpoint);
-    println!("keepalive-secs: {}", args.keepalive_secs);
-    println!("status: persistent client session manager is not implemented yet");
-
-    Ok(())
+async fn run_connect(args: ConnectArgs) -> Result<u8> {
+    session::ping(
+        &args.endpoint.addr,
+        &args.endpoint.password,
+        network_mode(args.local_only),
+        args.keepalive_secs,
+    )
+    .await?;
+    println!("connected");
+    Ok(0)
 }
 
-async fn run_exec(args: ExecArgs) -> Result<()> {
-    print_endpoint("exec", &args.endpoint);
-    println!("keepalive-secs: {}", args.keepalive_secs);
-    println!("command: {}", args.command.join(" "));
-    println!("status: remote command execution is not implemented yet");
+async fn run_exec(args: ExecArgs) -> Result<u8> {
+    let mut stdout = io::stdout();
+    let mut stderr = io::stderr();
+    if !args.no_session {
+        match session::exec_with_cancel(
+            session::ExecSessionRequest {
+                addr: &args.endpoint.addr,
+                password: &args.endpoint.password,
+                network_mode: network_mode(args.local_only),
+                keepalive_secs: args.keepalive_secs,
+                command: args.command.clone(),
+                stdout: &mut stdout,
+                stderr: &mut stderr,
+            },
+            async {
+                let _ = tokio::signal::ctrl_c().await;
+            },
+        )
+        .await
+        {
+            Ok(code) => return Ok(clamp_exit_code(code)),
+            Err(err) => tracing::debug!(
+                ?err,
+                "background session failed; falling back to direct connection"
+            ),
+        }
+    }
 
-    Ok(())
+    let client = make_client(args.endpoint, args.local_only)?;
+    let code = client
+        .exec_stream_with_cancel(args.command, &mut stdout, &mut stderr, async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await?;
+    Ok(clamp_exit_code(code))
 }
 
-async fn run_put(args: PutArgs) -> Result<()> {
-    print_endpoint("put", &args.endpoint);
-    println!("local: {}", args.local.display());
-    println!("remote: {}", args.remote);
-    println!("status: file upload is not implemented yet");
+async fn run_put(args: PutArgs) -> Result<u8> {
+    if !args.no_session {
+        match session::put(
+            &args.endpoint.addr,
+            &args.endpoint.password,
+            network_mode(args.local_only),
+            args.keepalive_secs,
+            &args.local,
+            &args.remote,
+        )
+        .await
+        {
+            Ok(_) => return Ok(0),
+            Err(err) => tracing::debug!(
+                ?err,
+                "background session failed; falling back to direct connection"
+            ),
+        }
+    }
 
-    Ok(())
+    let client = make_client(args.endpoint, args.local_only)?;
+    client.put(&args.local, &args.remote).await?;
+    Ok(0)
 }
 
-async fn run_get(args: GetArgs) -> Result<()> {
-    print_endpoint("get", &args.endpoint);
-    println!("remote: {}", args.remote);
-    println!("local: {}", args.local.display());
-    println!("status: file download is not implemented yet");
+async fn run_get(args: GetArgs) -> Result<u8> {
+    if !args.no_session {
+        match session::get(
+            &args.endpoint.addr,
+            &args.endpoint.password,
+            network_mode(args.local_only),
+            args.keepalive_secs,
+            &args.remote,
+            &args.local,
+        )
+        .await
+        {
+            Ok(_) => return Ok(0),
+            Err(err) => tracing::debug!(
+                ?err,
+                "background session failed; falling back to direct connection"
+            ),
+        }
+    }
 
-    Ok(())
+    let client = make_client(args.endpoint, args.local_only)?;
+    client.get(&args.remote, &args.local).await?;
+    Ok(0)
 }
 
-fn print_endpoint(action: &str, endpoint: &EndpointArgs) {
-    println!("RemoText client {action}");
-    println!("network: {NETWORK_LAYER}");
-    println!("protocol: {PROTOCOL_ALPN}");
-    println!("addr: {}", endpoint.addr);
-    println!("password: {}", describe_secret(&endpoint.password));
+async fn run_session(args: SessionArgs) -> Result<u8> {
+    session::run_background(
+        args.addr,
+        args.password,
+        session::decode_token(&args.token)?,
+        args.session_file,
+        network_mode(args.local_only),
+        args.keepalive_secs,
+    )
+    .await?;
+    Ok(0)
 }
 
-fn describe_secret(secret: &str) -> String {
-    if secret.is_empty() {
-        "<empty>".to_string()
+fn make_client(endpoint: EndpointArgs, local_only: bool) -> Result<Client> {
+    let addr = ticket::decode_addr(&endpoint.addr)?;
+    Ok(Client::new(
+        addr,
+        endpoint.password,
+        network_mode(local_only),
+    ))
+}
+
+fn network_mode(local_only: bool) -> NetworkMode {
+    if local_only {
+        NetworkMode::LocalOnly
     } else {
-        format!("{} chars configured", secret.chars().count())
+        NetworkMode::Public
+    }
+}
+
+fn clamp_exit_code(code: i32) -> u8 {
+    if code < 0 {
+        1
+    } else {
+        u8::try_from(code).unwrap_or(1)
     }
 }

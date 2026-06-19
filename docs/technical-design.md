@@ -2,7 +2,7 @@
 
 ## Current State
 
-The repository currently contains a Rust CLI scaffold. The CLI commands, dependency selection, and documentation are in place. The iroh server runtime, client session manager, authentication handshake, command execution, and file transfer protocol are still pending implementation.
+The repository contains a working Rust implementation of the core RemoText flow. The server binds an iroh endpoint and prints an `rt1_` address ticket. Clients authenticate with password-derived HMAC challenge-response proofs, execute remote commands, stream files, and reuse a local background session for repeated one-line commands.
 
 ## Technology Choices
 
@@ -11,7 +11,7 @@ The repository currently contains a Rust CLI scaffold. The CLI commands, depende
 - CLI parser: Clap.
 - Network layer: `iroh` 1.0.0.
 - Transport security: iroh QUIC transport security plus RemoText application authentication.
-- Serialization: to be finalized. A compact binary format such as postcard or bincode is suitable for framed protocol messages; JSON can be reserved for CLI output.
+- Serialization: postcard-encoded binary frames with a 4-byte big-endian length prefix.
 
 ## High-Level Architecture
 
@@ -52,17 +52,13 @@ The session manager is a per-user background helper. Its purpose is to make one-
 
 Responsibilities:
 
-- Maintain authenticated connections keyed by server address and local user.
-- Accept local requests from `remotext exec`, `put`, and `get` over platform-local IPC.
+- Maintain authenticated iroh connections keyed by server address and password-derived local session file.
+- Accept local requests from `remotext exec`, `put`, and `get` over a localhost TCP control channel protected by a random per-session token.
 - Keep sessions alive for the configured idle timeout.
 - Shut down when no sessions remain.
 - Avoid exposing passwords over local IPC after initial authentication.
 
-Initial IPC options:
-
-- Unix domain socket on Linux and macOS.
-- Named pipe on Windows.
-- Loopback TCP only as a fallback because it requires stricter binding and authentication checks.
+The first implementation uses loopback TCP for portability across Windows, Linux, and macOS. The session file is written with user-only permissions on Unix and contains the localhost port plus random token.
 
 ### Server Runtime
 
@@ -83,7 +79,7 @@ RemoText uses iroh for direct peer-to-peer connectivity, hole punching, relay fa
 
 Implementation principles:
 
-- Use a dedicated ALPN, currently planned as `remotext/1`.
+- Use a dedicated ALPN: `remotext/1`.
 - Use separate bidirectional QUIC streams for logical operations.
 - Keep command stdout and stderr as independent protocol streams or independent framed channels.
 - Apply backpressure from local stdout, stderr, and file writers to network reads.
@@ -92,16 +88,15 @@ Implementation principles:
 
 The password is an application-level shared secret used to authorize clients after an iroh connection is established. It must not be transmitted directly.
 
-Recommended flow for MVP:
+Implemented flow:
 
-- Server stores a salted password verifier, not the raw password, when persistence is enabled.
 - Client opens an iroh connection with the RemoText ALPN.
-- Server sends a nonce, server identity, protocol version, and KDF parameters.
-- Client derives a proof from the password and nonce.
-- Server verifies the proof and returns a short-lived session token.
-- All later requests on that connection reference the authenticated session state rather than resending the password.
+- Client sends protocol version and a client nonce.
+- Server sends protocol version, server nonce, and iroh server identity.
+- Client sends a request plus HMAC-SHA256 proof derived from the password, both nonces, server identity, and request transcript.
+- Server verifies the proof before executing the request.
 
-The exact primitive should be selected during implementation. If a mature PAKE crate is chosen, prefer PAKE over ad-hoc challenge-response. If using HMAC challenge-response, include server identity, client nonce, server nonce, protocol version, and transcript hash in the proof to reduce replay and confusion risk.
+This avoids sending the raw password over the network. A mature PAKE remains a future hardening option.
 
 ### Command Execution
 
@@ -114,6 +109,7 @@ Execution model:
 - Server streams stdout and stderr back to the client.
 - Server sends a final exit status frame after all output streams close.
 - Client exits with the same numeric exit code when available.
+- Client cancellation sends a cancel frame; server kills the remote child process and returns an exit frame.
 
 Shell behavior:
 
@@ -155,8 +151,8 @@ Server state:
 
 Client state:
 
-- Session manager socket or pipe path.
-- Cached authenticated connection metadata.
+- Session manager localhost port and random token in a temp-directory session file.
+- Warm authenticated iroh connection inside the background process.
 - Optional known-server trust records.
 
 Default directories should use platform conventions:
@@ -198,10 +194,10 @@ Recommended categories:
 
 ## Implementation Order
 
-1. Wire iroh endpoint startup in `server` and print a real address or ticket.
-2. Implement direct client dial and protocol version handshake.
-3. Add password authentication.
-4. Implement `exec` without session manager.
-5. Implement file upload and download.
-6. Add local client session manager and connection reuse.
-7. Add service installation helpers and CI release packaging.
+1. Completed: iroh endpoint startup in `server` and real `rt1_` tickets.
+2. Completed: direct client dial and protocol version handshake.
+3. Completed: password authentication without plaintext password transmission.
+4. Completed: remote command execution with stdout, stderr, exit code, and cancellation.
+5. Completed: streaming file upload and download.
+6. Completed: local client session manager and connection reuse.
+7. Remaining: service installation helpers, release packaging, PAKE hardening, and policy controls.

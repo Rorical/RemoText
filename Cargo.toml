@@ -7,8 +7,18 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
+dirs = "6"
+hmac = "0.13"
 iroh = "1.0.0"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+postcard = { version = "1.1", features = ["use-std"] }
+rand = "0.10"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.11"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+tempfile = "3"
