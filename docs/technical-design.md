@@ -2,7 +2,7 @@
 
 ## Current State
 
-The repository contains a working Rust implementation of the core RemoText flow. The server binds an iroh endpoint and prints an `rt1_` address ticket. Clients authenticate with password-derived HMAC challenge-response proofs, execute remote commands, stream files, and reuse a local background session for repeated one-line commands.
+The repository contains a working Rust implementation of the core RemoText flow. The server binds an iroh endpoint and prints an `rt1_` address ticket. Clients authenticate with OPAQUE PAKE, execute remote commands, stream files, and reuse a local background session for repeated one-line commands.
 
 ## Technology Choices
 
@@ -11,6 +11,7 @@ The repository contains a working Rust implementation of the core RemoText flow.
 - CLI parser: Clap.
 - Network layer: `iroh` 1.0.0.
 - Transport security: iroh QUIC transport security plus RemoText application authentication.
+- Password authentication: OPAQUE PAKE through `opaque-ke` with Ristretto255, TripleDH, SHA-512, and Argon2.
 - Serialization: postcard-encoded binary frames with a 4-byte big-endian length prefix.
 
 ## High-Level Architecture
@@ -91,12 +92,14 @@ The password is an application-level shared secret used to authorize clients aft
 Implemented flow:
 
 - Client opens an iroh connection with the RemoText ALPN.
-- Client sends protocol version and a client nonce.
-- Server sends protocol version, server nonce, and iroh server identity.
-- Client sends a request plus HMAC-SHA256 proof derived from the password, both nonces, server identity, and request transcript.
-- Server verifies the proof before executing the request.
+- Client sends protocol version and an OPAQUE credential request.
+- Server replies with protocol version, iroh server identity, and an OPAQUE credential response.
+- Client verifies the server identity in the RemoText handshake matches the authenticated iroh remote endpoint identity.
+- Client completes OPAQUE, derives a per-login session key, and sends credential finalization plus the actual RemoText request.
+- Client adds an HMAC-SHA256 request MAC keyed by the OPAQUE session key and bound to the server identity, ALPN, protocol version, and serialized request.
+- Server completes OPAQUE, verifies the request MAC, and only then executes the request.
 
-This avoids sending the raw password over the network. A mature PAKE remains a future hardening option.
+This avoids sending the raw password over the network and avoids exposing a reusable offline password-checking transcript. The current server still receives the configured password at startup, derives an in-memory OPAQUE password file, and then uses that verifier for logins.
 
 ### Command Execution
 
@@ -196,8 +199,8 @@ Recommended categories:
 
 1. Completed: iroh endpoint startup in `server` and real `rt1_` tickets.
 2. Completed: direct client dial and protocol version handshake.
-3. Completed: password authentication without plaintext password transmission.
+3. Completed: OPAQUE PAKE authentication without plaintext password transmission.
 4. Completed: remote command execution with stdout, stderr, exit code, and cancellation.
 5. Completed: streaming file upload and download.
 6. Completed: local client session manager and connection reuse.
-7. Remaining: service installation helpers, release packaging, PAKE hardening, and policy controls.
+7. Remaining: service installation helpers, release packaging, persisted verifier setup, authentication rate limiting, and policy controls.

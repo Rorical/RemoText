@@ -18,19 +18,20 @@ pub enum Message {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClientHello {
     pub version: u16,
-    pub client_nonce: [u8; 32],
+    pub credential_request: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ServerHello {
     pub version: u16,
-    pub server_nonce: [u8; 32],
     pub server_id: [u8; 32],
+    pub credential_response: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClientRequest {
-    pub proof: [u8; 32],
+    pub credential_finalization: Vec<u8>,
+    pub request_mac: [u8; 32],
     pub request: Request,
 }
 

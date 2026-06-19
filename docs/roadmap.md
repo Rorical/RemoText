@@ -25,14 +25,18 @@ Deliverables:
 
 ## Milestone 2: Authentication
 
-Status: completed with HMAC challenge-response. PAKE remains a hardening option.
+Status: completed with OPAQUE PAKE. Failed-authentication rate limiting remains a hardening item.
 
 Deliverables:
 
-- Password-based challenge-response or PAKE handshake.
+- Password-based OPAQUE PAKE handshake.
 - Failed authentication returns stable errors.
-- Authentication attempts are rate limited.
 - Passwords are redacted in logs.
+
+Remaining hardening:
+
+- Authentication attempts are rate limited.
+- OPAQUE server setup and verifier can be persisted without storing the raw password.
 
 ## Milestone 3: Direct Command Execution
 

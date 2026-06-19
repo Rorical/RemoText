@@ -56,7 +56,7 @@ mod tests {
     async fn frame_roundtrip() {
         let message = Message::ClientHello(ClientHello {
             version: 1,
-            client_nonce: [7; 32],
+            credential_request: vec![7; 32],
         });
         let mut bytes = Vec::new();
         write_message(&mut bytes, &message).await.unwrap();

@@ -10,12 +10,13 @@ anyhow = "1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 dirs = "6"
-hmac = "0.13"
+hmac = "0.12"
 iroh = "1.0.0"
+opaque-ke = { version = "4.1.0-pre.2", features = ["argon2", "std"] }
 postcard = { version = "1.1", features = ["use-std"] }
 rand = "0.10"
 serde = { version = "1", features = ["derive"] }
-sha2 = "0.11"
+sha2 = "0.10"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

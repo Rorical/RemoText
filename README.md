@@ -2,7 +2,7 @@
 
 RemoText is a lightweight, portable remote command execution agent written in Rust. It uses `iroh` as the network layer so a client can connect by a server-provided address ticket instead of manually managing public IPs, port forwarding, or VPNs.
 
-The current implementation provides iroh server and client runtime, password-based challenge-response authentication, remote command execution, streaming file upload/download, cancellation, and a local background session manager for repeated one-line commands.
+The current implementation provides iroh server and client runtime, OPAQUE PAKE password authentication, remote command execution, streaming file upload/download, cancellation, and a local background session manager for repeated one-line commands.
 
 ## Target Capabilities
 

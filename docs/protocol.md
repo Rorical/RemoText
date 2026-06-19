@@ -22,23 +22,25 @@ The payload contains the message type through serde enum tagging.
 
 ## Connection Handshake
 
-Planned sequence:
+Implemented sequence for each operation stream:
 
 ```text
 client -> server: iroh connect with ALPN remotext/1
-server -> client: ServerHello(version, server_nonce, server_identity, auth_params)
-client -> server: ClientHello(version, client_nonce, auth_proof, client_caps)
+client -> server: ClientHello(version, opaque_credential_request)
+server -> client: ServerHello(version, server_identity, opaque_credential_response)
+client -> server: ClientRequest(opaque_credential_finalization, request_mac, request)
 server -> client: Response(...) or Response(Error(...))
 ```
 
-The authentication proof must bind the password-derived secret to:
+Authentication uses OPAQUE through `opaque-ke` with Ristretto255, TripleDH, SHA-512, and Argon2. The OPAQUE context binds the password-authenticated key exchange to:
 
-- Server nonce.
-- Client nonce.
 - Server iroh identity.
 - Protocol version.
 - ALPN value.
-- Authentication parameter set.
+
+The client must reject the handshake if `ServerHello.server_identity` does not match the iroh connection's authenticated remote endpoint identity.
+
+After OPAQUE completes, both sides derive a per-login session key. `ClientRequest.request_mac` is an HMAC-SHA256 over the serialized `Request`, keyed by that OPAQUE session key and also bound to the server identity, ALPN, and protocol version. This prevents a valid PAKE login from being reused with a modified request.
 
 ## Capability Negotiation
 

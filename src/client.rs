@@ -282,12 +282,12 @@ async fn open_authenticated_stream(
 ) -> Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)> {
     let (mut send, mut recv) = conn.open_bi().await.context("open request stream")?;
 
-    let client_nonce: [u8; 32] = rand::random();
+    let login = auth::ClientLoginStart::new(password)?;
     write_message(
         &mut send,
         &Message::ClientHello(ClientHello {
             version: PROTOCOL_VERSION,
-            client_nonce,
+            credential_request: login.credential_request().to_vec(),
         }),
     )
     .await?;
@@ -306,17 +306,24 @@ async fn open_authenticated_stream(
         );
     }
 
-    let request_bytes = auth::request_bytes(&request)?;
-    let proof = auth::proof(
+    let remote_id = *conn.remote_id().as_bytes();
+    if server_hello.server_id != remote_id {
+        bail!("server identity in PAKE handshake does not match iroh connection identity");
+    }
+
+    let (credential_finalization, request_mac) = login.finish(
         password,
         &server_hello.server_id,
-        &client_nonce,
-        &server_hello.server_nonce,
-        &request_bytes,
-    );
+        &server_hello.credential_response,
+        &request,
+    )?;
     write_message(
         &mut send,
-        &Message::ClientRequest(ClientRequest { proof, request }),
+        &Message::ClientRequest(ClientRequest {
+            credential_finalization,
+            request_mac,
+            request,
+        }),
     )
     .await?;
 

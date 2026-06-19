@@ -18,8 +18,10 @@ Primary threats:
 ## Authentication Requirements
 
 - Never send the raw password over the network.
-- Bind authentication proofs to server identity and both client and server nonces.
-- Reject replayed proofs.
+- Use PAKE so captured authentication traffic is not a reusable offline password-checking proof.
+- Bind authentication to server identity, protocol version, and ALPN.
+- Bind the post-authentication request to the PAKE session key.
+- Reject replayed or modified authentication and request transcripts.
 - Rate limit failed authentication attempts.
 - Support password rotation by restarting or reconfiguring the server.
 - Store a password verifier rather than the raw password when server configuration is persisted.
@@ -94,13 +96,14 @@ Not allowed by default:
 - Full command output.
 - File contents.
 - Authentication proofs.
+- OPAQUE session keys.
 
 Command strings can reveal secrets. Logging full command arguments should require an explicit debug or audit mode.
 
 ## Hardening Backlog
 
 - Add a memory zeroization strategy for password buffers where practical.
-- Evaluate a mature PAKE implementation instead of custom HMAC-only authentication.
+- Persist OPAQUE server setup and password verifier without storing the raw password.
 - Add known-server trust records to reduce accidental connection to the wrong node.
 - Add optional command policy files.
 - Add signed release artifacts and checksums.

@@ -94,7 +94,7 @@ The product is intentionally command-line only. It should be easy to copy as a s
 ## Security Requirements
 
 - The password must never be sent over the network in plaintext.
-- Authentication should use challenge-response or PAKE-style verification over the encrypted iroh connection.
+- Authentication should use PAKE-style verification over the encrypted iroh connection.
 - Brute-force attempts must be rate limited by the server.
 - Client-side password input through environment variables is supported for automation, but documentation must warn about command-line secret exposure.
 - Server command execution should default to the current process user and must document that privilege boundary clearly.

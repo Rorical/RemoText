@@ -42,7 +42,7 @@ pub struct ServerConfig {
 
 pub struct Server {
     endpoint: Endpoint,
-    password: Arc<String>,
+    auth: Arc<auth::ServerAuth>,
     name: String,
     data_dir: PathBuf,
 }
@@ -61,6 +61,8 @@ impl Server {
             .await
             .with_context(|| format!("create data directory {}", data_dir.display()))?;
         let secret_key = load_or_create_secret(&data_dir).await?;
+        let server_id = *secret_key.public().as_bytes();
+        let auth = Arc::new(auth::ServerAuth::new(&config.password, server_id)?);
 
         let endpoint = match config.network_mode {
             NetworkMode::Public => Endpoint::builder(presets::N0)
@@ -79,7 +81,7 @@ impl Server {
 
         Ok(Self {
             endpoint,
-            password: Arc::new(config.password),
+            auth,
             name: config.name,
             data_dir,
         })
@@ -102,8 +104,7 @@ impl Server {
         F: Future<Output = ()>,
     {
         let endpoint = self.endpoint.clone();
-        let server_id = *endpoint.secret_key().public().as_bytes();
-        let password = self.password.clone();
+        let auth = self.auth.clone();
         tokio::pin!(shutdown);
 
         loop {
@@ -113,9 +114,9 @@ impl Server {
                     let Some(incoming) = incoming else {
                         break;
                     };
-                    let password = password.clone();
+                    let auth = auth.clone();
                     tokio::spawn(async move {
-                        if let Err(err) = handle_incoming(incoming, password, server_id).await {
+                        if let Err(err) = handle_incoming(incoming, auth).await {
                             debug!(?err, "connection handler stopped");
                         }
                     });
@@ -130,16 +131,15 @@ impl Server {
 
 async fn handle_incoming(
     incoming: iroh::endpoint::Incoming,
-    password: Arc<String>,
-    server_id: [u8; 32],
+    auth: Arc<auth::ServerAuth>,
 ) -> Result<()> {
     let conn = incoming.await.context("accept iroh connection")?;
     loop {
         match conn.accept_bi().await {
             Ok((send, recv)) => {
-                let password = password.clone();
+                let auth = auth.clone();
                 tokio::spawn(async move {
-                    if let Err(err) = handle_stream(send, recv, password, server_id).await {
+                    if let Err(err) = handle_stream(send, recv, auth).await {
                         debug!(?err, "request stream handler stopped");
                     }
                 });
@@ -156,8 +156,7 @@ async fn handle_incoming(
 async fn handle_stream(
     mut send: iroh::endpoint::SendStream,
     mut recv: iroh::endpoint::RecvStream,
-    password: Arc<String>,
-    server_id: [u8; 32],
+    auth: Arc<auth::ServerAuth>,
 ) -> Result<()> {
     let hello = match read_message(&mut recv).await? {
         Message::ClientHello(hello) => hello,
@@ -185,13 +184,25 @@ async fn handle_stream(
         return Ok(());
     }
 
-    let server_nonce: [u8; 32] = rand::random();
+    let login = match auth.start_login(&hello.credential_request) {
+        Ok(login) => login,
+        Err(err) => {
+            write_error(
+                &mut send,
+                ErrorCode::Protocol,
+                format!("invalid OPAQUE credential request: {err}"),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
     write_message(
         &mut send,
         &Message::ServerHello(crate::protocol::ServerHello {
             version: PROTOCOL_VERSION,
-            server_nonce,
-            server_id,
+            server_id: *auth.server_id(),
+            credential_response: login.credential_response().to_vec(),
         }),
     )
     .await?;
@@ -209,13 +220,19 @@ async fn handle_stream(
         }
     };
 
-    if !auth::verify(
-        &password,
-        &server_id,
-        &hello.client_nonce,
-        &server_nonce,
+    let session_key = match login.finish(&request.credential_finalization) {
+        Ok(session_key) => session_key,
+        Err(_) => {
+            write_error(&mut send, ErrorCode::AuthFailed, "invalid password").await?;
+            return Ok(());
+        }
+    };
+
+    if !auth::verify_request_mac(
+        &session_key,
+        auth.server_id(),
         &request.request,
-        &request.proof,
+        &request.request_mac,
     )? {
         write_error(&mut send, ErrorCode::AuthFailed, "invalid password").await?;
         return Ok(());
