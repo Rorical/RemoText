@@ -49,3 +49,24 @@ cargo check
 cargo test
 cargo run -- --help
 ```
+
+## Install
+
+**Linux / macOS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Rorical/RemoText/main/scripts/install.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/Rorical/RemoText/main/scripts/install.ps1 | iex
+```
+
+**Self-update:**
+
+```bash
+remotext update           # check and install latest release
+remotext update --check   # only check, don't install
+```

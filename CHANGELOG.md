@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0] — 2026-06-19
+
+### Added
+
+- **Self-update**: `remotext update` checks GitHub releases and replaces the current binary in-place. `remotext update --check` only reports if a newer version is available (`src/update.rs`).
+- **One-click install scripts**: `scripts/install.sh` (Linux/macOS) and `scripts/install.ps1` (Windows) detect platform, download the latest release, extract, and install to PATH.
+
 ## [0.2.0] — 2026-06-19
 
 ### Security

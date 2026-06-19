@@ -6,6 +6,7 @@ pub mod protocol;
 pub mod server;
 pub mod session;
 pub mod ticket;
+pub mod update;
 
 pub const NETWORK_LAYER: &str = "iroh";
 pub const PROTOCOL_ALPN_STR: &str = "remotext/1";

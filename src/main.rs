@@ -6,7 +6,7 @@ use remotext::{
     NETWORK_LAYER, PROTOCOL_ALPN_STR,
     client::Client,
     server::{NetworkMode, Server, ServerConfig, ServerLimits},
-    session, ticket,
+    session, ticket, update,
 };
 use tokio::io::{self};
 
@@ -26,6 +26,7 @@ async fn main() -> Result<ExitCode> {
         Commands::Put(args) => run_put(args).await?,
         Commands::Get(args) => run_get(args).await?,
         Commands::Session(args) => run_session(args).await?,
+        Commands::Update(args) => run_update(args).await?,
     };
 
     Ok(ExitCode::from(code))
@@ -58,6 +59,8 @@ enum Commands {
     /// Internal background client session process.
     #[command(name = "__session", hide = true)]
     Session(SessionArgs),
+    /// Check for a newer version on GitHub and optionally self-update.
+    Update(UpdateArgs),
 }
 
 #[derive(Debug, Args)]
@@ -192,6 +195,13 @@ struct EndpointArgs {
     /// Shared password. Prefer REMOTEXT_PASSWORD for one-line scripted use.
     #[arg(long, env = "REMOTEXT_PASSWORD", value_name = "PASSWORD")]
     password: String,
+}
+
+#[derive(Debug, Args)]
+struct UpdateArgs {
+    /// Only check for updates, do not install.
+    #[arg(long)]
+    check: bool,
 }
 
 #[derive(Debug, Args)]
@@ -351,6 +361,37 @@ async fn run_get(args: GetArgs) -> Result<u8> {
     let client = make_client(args.endpoint, args.local_only)?;
     client.get(&args.remote, &args.local).await?;
     Ok(0)
+}
+
+async fn run_update(args: UpdateArgs) -> Result<u8> {
+    let current = env!("CARGO_PKG_VERSION");
+    if args.check {
+        match update::check_for_update(current) {
+            Ok(Some(latest)) => {
+                println!("Update available: v{latest} (current: v{current})");
+                Ok(0)
+            }
+            Ok(None) => {
+                println!("Already up to date (v{current})");
+                Ok(0)
+            }
+            Err(err) => {
+                eprintln!("Update check failed: {err}");
+                Ok(1)
+            }
+        }
+    } else {
+        match update::self_update() {
+            Ok(prev) => {
+                println!("Updated from v{prev} to v{current}");
+                Ok(0)
+            }
+            Err(err) => {
+                eprintln!("Self-update failed: {err}");
+                Ok(1)
+            }
+        }
+    }
 }
 
 async fn run_session(args: SessionArgs) -> Result<u8> {
