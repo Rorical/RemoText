@@ -1,7 +1,7 @@
 use anyhow::Result;
 use remotext::{
     client::Client,
-    server::{NetworkMode, Server, ServerConfig},
+    server::{NetworkMode, Server, ServerConfig, ServerLimits},
 };
 use tempfile::TempDir;
 use tokio::sync::oneshot;
@@ -15,12 +15,17 @@ struct TestServer {
 
 impl TestServer {
     async fn start(password: &str) -> Result<Self> {
+        Self::start_with_limits(password, None).await
+    }
+
+    async fn start_with_limits(password: &str, limits: Option<ServerLimits>) -> Result<Self> {
         let dir = tempfile::tempdir()?;
         let server = Server::bind(ServerConfig {
             password: password.to_string(),
             name: "test".to_string(),
             data_dir: Some(dir.path().to_path_buf()),
             network_mode: NetworkMode::LocalOnly,
+            limits,
         })
         .await?;
         let ticket = server.ticket()?;
@@ -206,4 +211,80 @@ fn failing_command() -> Vec<String> {
 #[cfg(not(windows))]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[tokio::test]
+async fn put_rejects_file_exceeding_max_size() -> Result<()> {
+    let limits = ServerLimits {
+        max_file_size: 1024,
+        ..Default::default()
+    };
+    let server = TestServer::start_with_limits("secret", Some(limits)).await?;
+    let work = tempfile::tempdir()?;
+    let source = work.path().join("big.txt");
+    let payload = vec![0u8; 2048];
+    tokio::fs::write(&source, &payload).await?;
+
+    let err = server
+        .client("secret")
+        .put(&source, &work.path().join("dest.txt").to_string_lossy())
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("transfer denied"),
+        "expected transfer denied, got: {err}"
+    );
+    server.stop().await
+}
+
+#[tokio::test]
+async fn exec_timeout_kills_long_running_command() -> Result<()> {
+    let limits = ServerLimits {
+        max_command_secs: 1,
+        ..Default::default()
+    };
+    let server = TestServer::start_with_limits("secret", Some(limits)).await?;
+
+    #[cfg(not(windows))]
+    let command = vec!["sleep".to_string(), "30".to_string()];
+    #[cfg(windows)]
+    let command = vec!["cmd".to_string(), "/C".to_string(), "timeout /t 30".to_string()];
+
+    let result = server.client("secret").exec_collect(command).await?;
+    assert_ne!(result.code, 0, "timed-out command should have nonzero exit code");
+    server.stop().await
+}
+
+#[tokio::test]
+async fn put_get_verifies_transfer_hash() -> Result<()> {
+    let server = TestServer::start("secret").await?;
+    let work = tempfile::tempdir()?;
+    let source = work.path().join("source.bin");
+    let remote = work.path().join("remote.bin");
+    let dest = work.path().join("dest.bin");
+    let payload: Vec<u8> = (0..100_000).map(|i| (i % 251) as u8).collect();
+    tokio::fs::write(&source, &payload).await?;
+
+    let client = server.client("secret");
+    let uploaded = client.put(&source, &remote.to_string_lossy()).await?;
+    assert_eq!(uploaded, payload.len() as u64);
+
+    let downloaded = client.get(&remote.to_string_lossy(), &dest).await?;
+    assert_eq!(downloaded, payload.len() as u64);
+    assert_eq!(tokio::fs::read(&dest).await?, payload);
+
+    server.stop().await
+}
+
+#[tokio::test]
+async fn authentication_failure_is_rejected() -> Result<()> {
+    let server = TestServer::start("secret").await?;
+    let bad_client = server.client("wrong");
+
+    let err = bad_client.ping().await.unwrap_err();
+    assert!(
+        err.to_string().contains("authentication failed"),
+        "expected auth failure, got: {err}"
+    );
+    server.stop().await
 }

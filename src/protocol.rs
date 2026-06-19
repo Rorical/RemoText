@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
 pub const FILE_CHUNK_SIZE: usize = 64 * 1024;
 pub const OUTPUT_CHUNK_SIZE: usize = 16 * 1024;
+pub const DEFAULT_MAX_FILE_SIZE: u64 = 1 << 30;
+pub const DEFAULT_MAX_CONNECTIONS: usize = 64;
+pub const DEFAULT_MAX_CONCURRENT_COMMANDS: usize = 16;
+pub const DEFAULT_MAX_COMMAND_SECS: u64 = 3600;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Message {
@@ -66,7 +70,7 @@ pub enum Response {
     Pong,
     PutReady,
     GetMetadata { size: u64 },
-    TransferDone { bytes: u64 },
+    TransferDone { bytes: u64, hash: Option<Vec<u8>> },
     ExecStarted,
     ExecOutput { stream: OutputStream, data: Vec<u8> },
     ExecExit { code: Option<i32> },

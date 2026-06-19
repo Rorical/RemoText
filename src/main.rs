@@ -5,7 +5,7 @@ use clap::{Args, Parser, Subcommand};
 use remotext::{
     NETWORK_LAYER, PROTOCOL_ALPN_STR,
     client::Client,
-    server::{NetworkMode, Server, ServerConfig},
+    server::{NetworkMode, Server, ServerConfig, ServerLimits},
     session, ticket,
 };
 use tokio::io::{self};
@@ -77,6 +77,22 @@ struct ServerArgs {
     /// Disable relay and discovery services. Useful for local tests and LAN-only operation.
     #[arg(long)]
     local_only: bool,
+
+    /// Maximum concurrent iroh connections.
+    #[arg(long, default_value_t = remotext::protocol::DEFAULT_MAX_CONNECTIONS as u64, value_name = "N")]
+    max_connections: u64,
+
+    /// Maximum concurrent command executions.
+    #[arg(long, default_value_t = remotext::protocol::DEFAULT_MAX_CONCURRENT_COMMANDS as u64, value_name = "N")]
+    max_concurrent_commands: u64,
+
+    /// Maximum file transfer size in bytes.
+    #[arg(long, default_value_t = remotext::protocol::DEFAULT_MAX_FILE_SIZE, value_name = "BYTES")]
+    max_file_size: u64,
+
+    /// Maximum command runtime in seconds before forced termination.
+    #[arg(long, default_value_t = remotext::protocol::DEFAULT_MAX_COMMAND_SECS, value_name = "SECONDS")]
+    max_command_secs: u64,
 }
 
 #[derive(Debug, Args)]
@@ -189,11 +205,11 @@ struct SessionArgs {
     password: String,
 
     /// Base64url-encoded local session token.
-    #[arg(long, value_name = "TOKEN")]
+    #[arg(long, env = "REMOTEXT_TOKEN", value_name = "TOKEN")]
     token: String,
 
     /// Path where the background process writes its local listener metadata.
-    #[arg(long, value_name = "FILE")]
+    #[arg(long, env = "REMOTEXT_SESSION_FILE", value_name = "FILE")]
     session_file: PathBuf,
 
     /// Keep the local background connection alive for this many idle seconds.
@@ -206,11 +222,18 @@ struct SessionArgs {
 }
 
 async fn run_server(args: ServerArgs) -> Result<u8> {
+    let limits = ServerLimits {
+        max_connections: args.max_connections as usize,
+        max_concurrent_commands: args.max_concurrent_commands as usize,
+        max_file_size: args.max_file_size,
+        max_command_secs: args.max_command_secs,
+    };
     let server = Server::bind(ServerConfig {
         password: args.password,
         name: args.name,
         data_dir: args.data_dir,
         network_mode: network_mode(args.local_only),
+        limits: Some(limits),
     })
     .await?;
 

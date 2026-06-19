@@ -100,11 +100,30 @@ Not allowed by default:
 
 Command strings can reveal secrets. Logging full command arguments should require an explicit debug or audit mode.
 
+## Requirements Status
+
+The following authentication and hardening requirements have been implemented:
+
+- [x] PAKE uses OPAQUE with Ristretto255 + Argon2 — no raw password on wire
+- [x] Authentication transcript binds protocol version, ALPN, and server identity
+- [x] Post-authentication request bound to PAKE session key via HMAC-SHA256
+- [x] Server-side exponential backoff rate limiting on failed auth attempts
+- [x] Password values redacted in Debug output for all password-carrying structs
+- [x] Session token and password passed via env vars to background process (not CLI args)
+- [x] Session file name derived from server address only (not password hash)
+- [x] `ServerLimits` struct with configurable: max connections, max concurrent commands, max file size, max command seconds
+- [x] Dangerous env vars (`LD_PRELOAD`, `DYLD_*`, etc.) filtered from client-supplied environment
+- [x] OS error details redacted in `ExecStartFailed` responses to clients
+- [x] SHA256 integrity hash embedded in `TransferDone` for file transfer verification
+- [x] Password memory zeroized via `zeroize` crate on server config and client drop
+- [x] Path canonicalization helper (`canonicalize_or_bail`) available for future use
+
 ## Hardening Backlog
 
-- Add a memory zeroization strategy for password buffers where practical.
 - Persist OPAQUE server setup and password verifier without storing the raw password.
 - Add known-server trust records to reduce accidental connection to the wrong node.
 - Add optional command policy files.
 - Add signed release artifacts and checksums.
 - Add fuzz tests for protocol frame decoding.
+- Wire `canonicalize_or_bail` into file transfer paths with a configurable chroot/jail directory.
+- Encrypt server identity key at rest.

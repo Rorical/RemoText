@@ -1,11 +1,13 @@
-use std::{future::Future, path::Path};
+use std::{fmt, future::Future, path::Path};
 
 use anyhow::{Context, Result, bail};
 use iroh::{Endpoint, EndpointAddr, endpoint::presets};
+use sha2::{Digest, Sha256};
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
 };
+use zeroize::Zeroize;
 
 use crate::{
     PROTOCOL_ALPN, PROTOCOL_VERSION, auth,
@@ -18,11 +20,21 @@ use crate::{
     server::NetworkMode,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Client {
     addr: EndpointAddr,
     password: String,
     network_mode: NetworkMode,
+}
+
+impl fmt::Debug for Client {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Client")
+            .field("addr", &self.addr)
+            .field("password", &"<redacted>")
+            .field("network_mode", &self.network_mode)
+            .finish()
+    }
 }
 
 #[derive(Clone)]
@@ -30,6 +42,26 @@ pub struct PersistentClient {
     _endpoint: Endpoint,
     conn: iroh::endpoint::Connection,
     password: String,
+}
+
+impl fmt::Debug for PersistentClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PersistentClient")
+            .field("password", &"<redacted>")
+            .finish()
+    }
+}
+
+impl Drop for Client {
+    fn drop(&mut self) {
+        self.password.zeroize();
+    }
+}
+
+impl Drop for PersistentClient {
+    fn drop(&mut self) {
+        self.password.zeroize();
+    }
 }
 
 struct RequestIo {
@@ -487,18 +519,28 @@ async fn put_io(mut io: RequestIo, local: &Path, expected_len: u64) -> Result<u6
         .with_context(|| format!("open local file {}", local.display()))?;
     let mut buf = vec![0u8; FILE_CHUNK_SIZE];
     let mut sent = 0u64;
+    let mut hasher = Sha256::new();
     loop {
         let read = file.read(&mut buf).await?;
         if read == 0 {
             break;
         }
         sent += read as u64;
+        hasher.update(&buf[..read]);
         write_message(&mut io.send, &Message::FileChunk(buf[..read].to_vec())).await?;
     }
     write_message(&mut io.send, &Message::FileEnd).await?;
 
     let transferred = match read_message(&mut io.recv).await? {
-        Message::Response(Response::TransferDone { bytes }) => bytes,
+        Message::Response(Response::TransferDone { bytes, hash }) => {
+            if let Some(server_hash) = &hash {
+                let local_hash = hasher.finalize().to_vec();
+                if server_hash != &local_hash {
+                    bail!("upload hash mismatch: server received corrupt data");
+                }
+            }
+            bytes
+        }
         Message::Response(Response::Error(err)) => return Err(remote_error(err)),
         other => bail!("unexpected put completion response: {other:?}"),
     };
@@ -528,21 +570,29 @@ async fn get_io(mut io: RequestIo, local: &Path) -> Result<u64> {
         .await
         .with_context(|| format!("create local temporary file {}", tmp.display()))?;
     let mut received = 0u64;
+    let mut hasher = Sha256::new();
 
     let result = async {
         loop {
             match read_message(&mut io.recv).await? {
                 Message::FileChunk(bytes) => {
                     received += bytes.len() as u64;
+                    hasher.update(&bytes);
                     file.write_all(&bytes).await?;
                 }
-                Message::Response(Response::TransferDone { bytes }) => {
+                Message::Response(Response::TransferDone { bytes, hash }) => {
                     file.flush().await?;
                     drop(file);
                     if bytes != received || bytes != expected {
                         bail!(
                             "download byte count mismatch: expected={expected}, received={received}, remote={bytes}"
                         );
+                    }
+                    if let Some(server_hash) = &hash {
+                        let local_hash = hasher.finalize().to_vec();
+                        if server_hash != &local_hash {
+                            bail!("download hash mismatch: received corrupt data");
+                        }
                     }
                     tokio::fs::rename(&tmp, local).await.with_context(|| {
                         format!(
@@ -632,4 +682,28 @@ fn remote_error(error: RemoteError) -> anyhow::Error {
         ErrorCode::Internal => "remote internal error",
     };
     anyhow::anyhow!("{prefix}: {}", error.message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_debug_redacts_password() {
+        let key = iroh::SecretKey::generate();
+        let addr = iroh::EndpointAddr::new(key.public());
+        let client = Client::new(addr, "secret123", NetworkMode::LocalOnly);
+        let debug = format!("{:?}", client);
+        assert!(!debug.contains("secret123"));
+        assert!(debug.contains("<redacted>"));
+    }
+
+    #[test]
+    fn persistent_client_debug_redacts_password() {
+        let key = iroh::SecretKey::generate();
+        let addr = iroh::EndpointAddr::new(key.public());
+        let client = Client::new(addr, "secret123", NetworkMode::LocalOnly);
+        let debug = format!("{:?}", client);
+        assert!(debug.contains("<redacted>"));
+    }
 }

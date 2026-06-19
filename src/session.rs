@@ -31,7 +31,7 @@ struct SessionInfo {
     token: [u8; 32],
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 enum SessionFrame {
     Hello { token: [u8; 32] },
     Request(SessionRequest),
@@ -41,6 +41,36 @@ enum SessionFrame {
     Cancel,
     TransferDone { bytes: u64 },
     Error(String),
+}
+
+impl std::fmt::Debug for SessionFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Hello { .. } => f.debug_struct("Hello").field("token", &"<redacted>").finish(),
+            Self::Request(req) => f.debug_tuple("Request").field(req).finish(),
+            Self::Ok => f.write_str("Ok"),
+            Self::ExecOutput { stream, data: _ } => f
+                .debug_struct("ExecOutput")
+                .field("stream", stream)
+                .field("data", &format!("<{} bytes>", self.data_len()))
+                .finish(),
+            Self::ExecExit { code } => f.debug_struct("ExecExit").field("code", code).finish(),
+            Self::Cancel => f.write_str("Cancel"),
+            Self::TransferDone { bytes } => {
+                f.debug_struct("TransferDone").field("bytes", bytes).finish()
+            }
+            Self::Error(msg) => f.debug_tuple("Error").field(msg).finish(),
+        }
+    }
+}
+
+impl SessionFrame {
+    fn data_len(&self) -> usize {
+        match self {
+            Self::ExecOutput { data, .. } => data.len(),
+            _ => 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -62,7 +92,7 @@ pub async fn ensure_session(
     network_mode: NetworkMode,
     keepalive_secs: u64,
 ) -> Result<SessionHandle> {
-    let session_file = session_file(addr, password)?;
+    let session_file = session_file(addr)?;
     if let Ok(handle) = load_handle(&session_file).await {
         if handle.ping().await.is_ok() {
             return Ok(handle);
@@ -476,19 +506,17 @@ async fn start_background(
     session_file: &Path,
 ) -> Result<()> {
     let token: [u8; 32] = rand::random();
-    let token = URL_SAFE_NO_PAD.encode(token);
+    let token_b64 = URL_SAFE_NO_PAD.encode(token);
     let mut command = tokio::process::Command::new(std::env::current_exe()?);
     command
         .arg("__session")
         .arg("--addr")
         .arg(addr)
-        .arg("--token")
-        .arg(&token)
-        .arg("--session-file")
-        .arg(session_file)
         .arg("--keepalive-secs")
         .arg(keepalive_secs.to_string())
         .env("REMOTEXT_PASSWORD", password)
+        .env("REMOTEXT_TOKEN", &token_b64)
+        .env("REMOTEXT_SESSION_FILE", session_file)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -510,11 +538,9 @@ pub fn decode_token(input: &str) -> Result<[u8; 32]> {
         .map_err(|_| anyhow::anyhow!("session token has invalid length"))
 }
 
-fn session_file(addr: &str, password: &str) -> Result<PathBuf> {
+fn session_file(addr: &str) -> Result<PathBuf> {
     let mut hasher = Sha256::new();
     hasher.update(addr.as_bytes());
-    hasher.update([0]);
-    hasher.update(password.as_bytes());
     let digest = hasher.finalize();
     let id = URL_SAFE_NO_PAD.encode(digest);
     Ok(std::env::temp_dir()
@@ -618,9 +644,29 @@ mod tests {
     }
 
     #[test]
-    fn session_file_changes_with_password() {
-        let a = session_file("rt1_test", "a").unwrap();
-        let b = session_file("rt1_test", "b").unwrap();
+    fn session_file_changes_with_address() {
+        let a = session_file("rt1_test_a").unwrap();
+        let b = session_file("rt1_test_b").unwrap();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn session_frame_debug_redacts_token() {
+        let token = [7u8; 32];
+        let frame = SessionFrame::Hello { token };
+        let debug = format!("{:?}", frame);
+        assert!(!debug.contains("777777"));
+        assert!(debug.contains("<redacted>"));
+    }
+
+    #[test]
+    fn session_frame_debug_redacts_exec_output_data() {
+        let frame = SessionFrame::ExecOutput {
+            stream: OutputStream::Stdout,
+            data: vec![1, 2, 3, 4],
+        };
+        let debug = format!("{:?}", frame);
+        assert!(!debug.contains("1, 2, 3, 4"));
+        assert!(debug.contains("4 bytes"));
     }
 }
