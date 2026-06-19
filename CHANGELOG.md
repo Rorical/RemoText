@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.3] — 2026-06-19
+
+### Fixed
+
+- Windows CLI integration test: `cmd /C "set /p"` exits code 1 with NUL stdin; force `exit /b 0`.
+
 ## [0.3.2] — 2026-06-19
 
 ### Fixed
