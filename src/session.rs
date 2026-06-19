@@ -781,6 +781,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(windows))]
     async fn wait_for_session_handle(path: &Path) -> Result<SessionHandle> {
         for _ in 0..50 {
             if let Ok(handle) = load_handle(path).await
