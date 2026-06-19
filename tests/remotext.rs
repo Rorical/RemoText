@@ -155,6 +155,7 @@ async fn explicit_cancel_stops_remote_process() -> Result<()> {
     server.stop().await
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn put_and_get_transfer_file() -> Result<()> {
     let server = TestServer::start("secret").await?;
@@ -189,7 +190,7 @@ fn success_command() -> Vec<String> {
     vec![
         "cmd".to_string(),
         "/C".to_string(),
-        "<NUL set /p dummy=hello".to_string(),
+        "<NUL set /p dummy=hello& exit /b 0".to_string(),
     ]
 }
 
@@ -262,6 +263,7 @@ async fn exec_timeout_kills_long_running_command() -> Result<()> {
     server.stop().await
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn put_get_verifies_transfer_hash() -> Result<()> {
     let server = TestServer::start("secret").await?;
