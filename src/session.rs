@@ -24,7 +24,7 @@ use crate::{client::Client, protocol::OutputStream, server::NetworkMode, ticket}
 
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 const SESSION_PING_TIMEOUT: Duration = Duration::from_secs(2);
-const STARTUP_ATTEMPTS: usize = 50;
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 const STARTUP_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -107,16 +107,23 @@ pub async fn ensure_session(
     }
 
     start_background(addr, password, network_mode, keepalive_secs, &session_file).await?;
-    for _ in 0..STARTUP_ATTEMPTS {
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    loop {
         if let Ok(handle) = load_handle(&session_file).await
             && session_ready(&handle).await
         {
             return Ok(handle);
         }
+        if Instant::now() >= deadline {
+            break;
+        }
         sleep(STARTUP_DELAY).await;
     }
 
-    bail!("background RemoText session did not become ready")
+    bail!(
+        "background RemoText session did not become ready within {}s",
+        STARTUP_TIMEOUT.as_secs()
+    )
 }
 
 pub async fn run_background(
