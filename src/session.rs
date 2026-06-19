@@ -134,10 +134,7 @@ pub async fn run_background(
     network_mode: NetworkMode,
     keepalive_secs: u64,
 ) -> Result<()> {
-    let client = Client::new(ticket::decode_addr(&addr)?, password, network_mode)
-        .connect_persistent()
-        .await?;
-    client.ping().await?;
+    let client = connect_background_client(&addr, password, network_mode).await?;
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
@@ -177,6 +174,42 @@ pub async fn run_background(
     client.close().await;
     let _ = tokio::fs::remove_file(session_file).await;
     Ok(())
+}
+
+async fn connect_background_client(
+    addr: &str,
+    password: String,
+    network_mode: NetworkMode,
+) -> Result<crate::client::PersistentClient> {
+    let client = Client::new(ticket::decode_addr(addr)?, password, network_mode);
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+
+    loop {
+        match client.connect_persistent().await {
+            Ok(persistent) => match persistent.ping().await {
+                Ok(()) => return Ok(persistent),
+                Err(err) => {
+                    debug!(
+                        ?err,
+                        "background RemoText session ping failed during startup"
+                    );
+                    persistent.close().await;
+                }
+            },
+            Err(err) => debug!(
+                ?err,
+                "background RemoText session connect failed during startup"
+            ),
+        }
+
+        if Instant::now() >= deadline {
+            bail!(
+                "background RemoText session could not connect within {}s",
+                STARTUP_TIMEOUT.as_secs()
+            );
+        }
+        sleep(STARTUP_DELAY).await;
+    }
 }
 
 async fn session_ready(handle: &SessionHandle) -> bool {
