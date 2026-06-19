@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.6] — 2026-06-19
+
+### Fixed
+
+- Background session startup now waits up to 60 seconds, preventing false failures during cold iroh public-network setup.
+
 ## [0.3.5] — 2026-06-19
 
 ### Fixed
