@@ -40,10 +40,7 @@ pub fn canonicalize_or_bail(path: &Path, base: &Path) -> Result<PathBuf> {
         .canonicalize()
         .with_context(|| format!("canonicalize path {}", resolved.display()))?;
     if !resolved.starts_with(&base) {
-        bail!(
-            "path escapes allowed directory: {}",
-            path.display()
-        );
+        bail!("path escapes allowed directory: {}", path.display());
     }
     Ok(resolved)
 }

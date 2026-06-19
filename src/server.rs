@@ -26,9 +26,9 @@ use crate::{
     files::{ensure_parent, temp_sibling},
     framing::{read_message, write_message},
     protocol::{
-        ErrorCode, ExecRequest, FILE_CHUNK_SIZE, GetRequest, Message, OUTPUT_CHUNK_SIZE,
-        OutputStream, PutRequest, RemoteError, Response, DEFAULT_MAX_COMMAND_SECS,
-        DEFAULT_MAX_CONCURRENT_COMMANDS, DEFAULT_MAX_CONNECTIONS, DEFAULT_MAX_FILE_SIZE,
+        DEFAULT_MAX_COMMAND_SECS, DEFAULT_MAX_CONCURRENT_COMMANDS, DEFAULT_MAX_CONNECTIONS,
+        DEFAULT_MAX_FILE_SIZE, ErrorCode, ExecRequest, FILE_CHUNK_SIZE, GetRequest, Message,
+        OUTPUT_CHUNK_SIZE, OutputStream, PutRequest, RemoteError, Response,
     },
     ticket,
 };
@@ -364,10 +364,7 @@ async fn handle_stream(
         Ok(session_key) => session_key,
         Err(_) => {
             let delay = rate_limiter.check_and_record_failure();
-            warn!(
-                ?delay,
-                "authentication failed; applying rate-limit delay"
-            );
+            warn!(?delay, "authentication failed; applying rate-limit delay");
             tokio::time::sleep(delay).await;
             write_error(&mut send, ErrorCode::AuthFailed, "invalid password").await?;
             return Ok(());
@@ -402,9 +399,7 @@ async fn handle_stream(
         crate::protocol::Request::Put(request) => {
             run_put(request, &mut send, &mut recv, &limits).await?
         }
-        crate::protocol::Request::Get(request) => {
-            run_get(request, &mut send, &limits).await?
-        }
+        crate::protocol::Request::Get(request) => run_get(request, &mut send, &limits).await?,
     }
 
     send.finish().ok();
@@ -440,12 +435,7 @@ async fn run_exec(
         Ok(child) => child,
         Err(err) => {
             warn!(?err, "command spawn failed");
-            write_error(
-                send,
-                ErrorCode::ExecStartFailed,
-                "failed to start command",
-            )
-            .await?;
+            write_error(send, ErrorCode::ExecStartFailed, "failed to start command").await?;
             return Ok(());
         }
     };
@@ -517,12 +507,8 @@ fn filter_env(env: Vec<(String, String)>) -> Vec<(String, String)> {
     env.into_iter()
         .filter(|(key, _)| {
             let upper = key.to_uppercase();
-            !BLOCKED_PREFIXES
-                .iter()
-                .any(|p| upper.starts_with(p))
-                && !BLOCKED_SUBSTRINGS
-                    .iter()
-                    .any(|s| upper.contains(s))
+            !BLOCKED_PREFIXES.iter().any(|p| upper.starts_with(p))
+                && !BLOCKED_SUBSTRINGS.iter().any(|s| upper.contains(s))
         })
         .collect()
 }
@@ -590,10 +576,7 @@ async fn run_put(
                         bail!("received more bytes than declared upload size");
                     }
                     if received > limits.max_file_size {
-                        bail!(
-                            "upload exceeded maximum file size {}",
-                            limits.max_file_size
-                        );
+                        bail!("upload exceeded maximum file size {}", limits.max_file_size);
                     }
                     hasher.update(&bytes);
                     file.write_all(&bytes).await?;
@@ -637,12 +620,7 @@ async fn run_put(
         }
         Err(err) => {
             let _ = tokio::fs::remove_file(&tmp).await;
-            write_error(
-                send,
-                ErrorCode::TransferInterrupted,
-                "transfer failed",
-            )
-            .await?;
+            write_error(send, ErrorCode::TransferInterrupted, "transfer failed").await?;
             debug!(?err, "upload transfer error");
         }
     }
@@ -800,7 +778,7 @@ mod tests {
         let d1 = limiter.check_and_record_failure();
         let d2 = limiter.check_and_record_failure();
         let d3 = limiter.check_and_record_failure();
-        assert!(d3 > d2 || d3 == d2);
+        assert!(d3 >= d2);
         assert!(d2 >= d1);
 
         let wait = limiter.should_wait();

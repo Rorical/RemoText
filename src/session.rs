@@ -46,7 +46,10 @@ enum SessionFrame {
 impl std::fmt::Debug for SessionFrame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Hello { .. } => f.debug_struct("Hello").field("token", &"<redacted>").finish(),
+            Self::Hello { .. } => f
+                .debug_struct("Hello")
+                .field("token", &"<redacted>")
+                .finish(),
             Self::Request(req) => f.debug_tuple("Request").field(req).finish(),
             Self::Ok => f.write_str("Ok"),
             Self::ExecOutput { stream, data: _ } => f
@@ -56,9 +59,10 @@ impl std::fmt::Debug for SessionFrame {
                 .finish(),
             Self::ExecExit { code } => f.debug_struct("ExecExit").field("code", code).finish(),
             Self::Cancel => f.write_str("Cancel"),
-            Self::TransferDone { bytes } => {
-                f.debug_struct("TransferDone").field("bytes", bytes).finish()
-            }
+            Self::TransferDone { bytes } => f
+                .debug_struct("TransferDone")
+                .field("bytes", bytes)
+                .finish(),
             Self::Error(msg) => f.debug_tuple("Error").field(msg).finish(),
         }
     }

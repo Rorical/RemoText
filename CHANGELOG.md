@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1] — 2026-06-19
+
+### Fixed
+
+- `cargo fmt` formatting compliance across all source files.
+- Clippy `double_comparisons` lint in rate-limiter unit test.
+
 ## [0.3.0] — 2026-06-19
 
 ### Added

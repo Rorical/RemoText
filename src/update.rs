@@ -38,8 +38,7 @@ pub fn check_for_update(current: &str) -> Result<Option<String>> {
 }
 
 pub fn self_update() -> Result<String> {
-    let current_exe =
-        env::current_exe().context("determine current executable path")?;
+    let current_exe = env::current_exe().context("determine current executable path")?;
 
     let release = fetch_latest_release()?;
 
@@ -64,9 +63,7 @@ pub fn self_update() -> Result<String> {
         .iter()
         .find(|a| a.name == filename)
         .map(|a| a.browser_download_url.clone())
-        .with_context(|| {
-            format!("release asset {filename} not found for this platform")
-        })?;
+        .with_context(|| format!("release asset {filename} not found for this platform"))?;
 
     let tmp = temp_dir()?;
     let archive_path = tmp.join(&filename);
@@ -204,12 +201,10 @@ fn replace_binary(new: &Path, current: &Path) -> Result<()> {
     }
 
     if current.exists() {
-        fs::rename(current, &backup)
-            .context("backup current binary")?;
+        fs::rename(current, &backup).context("backup current binary")?;
     }
 
-    fs::rename(new, current)
-        .context("install new binary")?;
+    fs::rename(new, current).context("install new binary")?;
 
     let _ = fs::remove_file(&backup);
     Ok(())

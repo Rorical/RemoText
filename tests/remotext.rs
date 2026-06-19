@@ -248,10 +248,17 @@ async fn exec_timeout_kills_long_running_command() -> Result<()> {
     #[cfg(not(windows))]
     let command = vec!["sleep".to_string(), "30".to_string()];
     #[cfg(windows)]
-    let command = vec!["cmd".to_string(), "/C".to_string(), "timeout /t 30".to_string()];
+    let command = vec![
+        "cmd".to_string(),
+        "/C".to_string(),
+        "timeout /t 30".to_string(),
+    ];
 
     let result = server.client("secret").exec_collect(command).await?;
-    assert_ne!(result.code, 0, "timed-out command should have nonzero exit code");
+    assert_ne!(
+        result.code, 0,
+        "timed-out command should have nonzero exit code"
+    );
     server.stop().await
 }
 
