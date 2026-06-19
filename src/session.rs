@@ -16,12 +16,14 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::{mpsc, oneshot},
-    time::{sleep, timeout},
+    time::{Instant, sleep, timeout},
 };
+use tracing::debug;
 
 use crate::{client::Client, protocol::OutputStream, server::NetworkMode, ticket};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
+const SESSION_PING_TIMEOUT: Duration = Duration::from_secs(2);
 const STARTUP_ATTEMPTS: usize = 50;
 const STARTUP_DELAY: Duration = Duration::from_millis(100);
 
@@ -98,7 +100,7 @@ pub async fn ensure_session(
 ) -> Result<SessionHandle> {
     let session_file = session_file(addr)?;
     if let Ok(handle) = load_handle(&session_file).await {
-        if handle.ping().await.is_ok() {
+        if session_ready(&handle).await {
             return Ok(handle);
         }
         let _ = tokio::fs::remove_file(&session_file).await;
@@ -107,7 +109,7 @@ pub async fn ensure_session(
     start_background(addr, password, network_mode, keepalive_secs, &session_file).await?;
     for _ in 0..STARTUP_ATTEMPTS {
         if let Ok(handle) = load_handle(&session_file).await
-            && handle.ping().await.is_ok()
+            && session_ready(&handle).await
         {
             return Ok(handle);
         }
@@ -137,19 +139,44 @@ pub async fn run_background(
     write_info(&session_file, &SessionInfo { port, token }).await?;
 
     let idle = Duration::from_secs(keepalive_secs.max(1));
+    let mut tasks = tokio::task::JoinSet::new();
+    let idle_sleep = sleep(idle);
+    tokio::pin!(idle_sleep);
+
     loop {
-        match timeout(idle, listener.accept()).await {
-            Ok(Ok((stream, _peer))) => {
-                let client = client.clone();
-                let _ = handle_connection(stream, client, token).await;
+        tokio::select! {
+            accepted = listener.accept() => match accepted {
+                Ok((stream, _peer)) => {
+                    let client = client.clone();
+                    tasks.spawn(async move { handle_connection(stream, client, token).await });
+                }
+                Err(err) => return Err(err).context("accept local RemoText session request"),
+            },
+            completed = tasks.join_next(), if !tasks.is_empty() => {
+                match completed {
+                    Some(Ok(Ok(()))) => {}
+                    Some(Ok(Err(err))) => debug!(?err, "local RemoText session request failed"),
+                    Some(Err(err)) => debug!(?err, "local RemoText session task failed"),
+                    None => {}
+                }
+                if tasks.is_empty() {
+                    idle_sleep.as_mut().reset(Instant::now() + idle);
+                }
             }
-            Ok(Err(err)) => return Err(err).context("accept local RemoText session request"),
-            Err(_) => break,
+            _ = &mut idle_sleep, if tasks.is_empty() => break,
         }
     }
 
+    client.close().await;
     let _ = tokio::fs::remove_file(session_file).await;
     Ok(())
+}
+
+async fn session_ready(handle: &SessionHandle) -> bool {
+    matches!(
+        timeout(SESSION_PING_TIMEOUT, handle.ping()).await,
+        Ok(Ok(()))
+    )
 }
 
 pub async fn ping(
@@ -672,5 +699,102 @@ mod tests {
         let debug = format!("{:?}", frame);
         assert!(!debug.contains("1, 2, 3, 4"));
         assert!(debug.contains("4 bytes"));
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn background_session_accepts_ping_while_exec_runs() -> Result<()> {
+        use crate::server::{Server, ServerConfig};
+        use tokio::sync::oneshot;
+
+        let server_dir = tempfile::tempdir()?;
+        let server = Server::bind(ServerConfig {
+            password: "secret".to_string(),
+            name: "test".to_string(),
+            data_dir: Some(server_dir.path().to_path_buf()),
+            network_mode: NetworkMode::LocalOnly,
+            limits: None,
+        })
+        .await?;
+        let addr = server.ticket()?;
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server_handle = tokio::spawn(server.run_until(async {
+            let _ = shutdown_rx.await;
+        }));
+
+        let session_path = session_file(&addr)?;
+        let _ = tokio::fs::remove_file(&session_path).await;
+        let token = [9u8; 32];
+        let background = tokio::spawn(run_background(
+            addr.clone(),
+            "secret".to_string(),
+            token,
+            session_path.clone(),
+            NetworkMode::LocalOnly,
+            30,
+        ));
+
+        let handle = wait_for_session_handle(&session_path).await?;
+        assert!(session_ready(&handle).await);
+
+        let work = tempfile::tempdir()?;
+        let started = work.path().join("started");
+        let script = format!(
+            "printf started > {}; sleep 2",
+            shell_quote(&started.to_string_lossy())
+        );
+        let exec_addr = addr.clone();
+        let exec_task = tokio::spawn(async move {
+            let mut stdout = tokio::io::sink();
+            let mut stderr = tokio::io::sink();
+            exec(ExecSessionRequest {
+                addr: &exec_addr,
+                password: "secret",
+                network_mode: NetworkMode::LocalOnly,
+                keepalive_secs: 30,
+                command: vec!["sh".to_string(), "-c".to_string(), script],
+                stdout: &mut stdout,
+                stderr: &mut stderr,
+            })
+            .await
+        });
+
+        for _ in 0..50 {
+            if tokio::fs::metadata(&started).await.is_ok() {
+                break;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        assert!(started.exists(), "long-running command did not start");
+
+        timeout(
+            Duration::from_secs(2),
+            ping(&addr, "secret", NetworkMode::LocalOnly, 30),
+        )
+        .await??;
+
+        assert_eq!(exec_task.await??, 0);
+        background.abort();
+        let _ = tokio::fs::remove_file(&session_path).await;
+        let _ = shutdown_tx.send(());
+        server_handle.await??;
+        Ok(())
+    }
+
+    async fn wait_for_session_handle(path: &Path) -> Result<SessionHandle> {
+        for _ in 0..50 {
+            if let Ok(handle) = load_handle(path).await
+                && session_ready(&handle).await
+            {
+                return Ok(handle);
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        bail!("background session did not become ready in test")
+    }
+
+    #[cfg(not(windows))]
+    fn shell_quote(value: &str) -> String {
+        format!("'{}'", value.replace('\'', "'\\''"))
     }
 }

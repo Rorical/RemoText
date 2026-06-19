@@ -65,7 +65,7 @@ impl Drop for PersistentClient {
 }
 
 struct RequestIo {
-    _endpoint: Option<Endpoint>,
+    endpoint: Option<Endpoint>,
     conn: iroh::endpoint::Connection,
     send: iroh::endpoint::SendStream,
     recv: iroh::endpoint::RecvStream,
@@ -188,7 +188,7 @@ impl Client {
             .context("connect to RemoText server")?;
         let (send, recv) = open_authenticated_stream(&conn, &self.password, request).await?;
         Ok(RequestIo {
-            _endpoint: Some(endpoint),
+            endpoint: Some(endpoint),
             conn,
             send,
             recv,
@@ -294,10 +294,15 @@ impl PersistentClient {
         .await
     }
 
+    pub async fn close(&self) {
+        self.conn.close(0u8.into(), b"done");
+        self._endpoint.clone().close().await;
+    }
+
     async fn open_request(&self, request: Request) -> Result<RequestIo> {
         let (send, recv) = open_authenticated_stream(&self.conn, &self.password, request).await?;
         Ok(RequestIo {
-            _endpoint: None,
+            endpoint: None,
             conn: self.conn.clone(),
             send,
             recv,
@@ -368,7 +373,7 @@ async fn ping_io(mut io: RequestIo) -> Result<()> {
         Message::Response(Response::Error(err)) => return Err(remote_error(err)),
         other => bail!("unexpected ping response: {other:?}"),
     }
-    io.finish();
+    io.finish().await;
     Ok(())
 }
 
@@ -388,7 +393,7 @@ async fn exec_collect_io(mut io: RequestIo) -> Result<ExecResult> {
         }
     };
 
-    io.finish();
+    io.finish().await;
     Ok(ExecResult {
         code,
         stdout,
@@ -426,7 +431,7 @@ where
         }
     };
 
-    io.finish();
+    io.finish().await;
     Ok(ExecResult {
         code,
         stdout,
@@ -458,7 +463,7 @@ where
         }
     };
 
-    io.finish();
+    io.finish().await;
     Ok(code)
 }
 
@@ -503,7 +508,7 @@ where
         }
     };
 
-    io.finish();
+    io.finish().await;
     Ok(code)
 }
 
@@ -553,7 +558,7 @@ async fn put_io(mut io: RequestIo, local: &Path, expected_len: u64) -> Result<u6
         );
     }
 
-    io.finish();
+    io.finish().await;
     Ok(transferred)
 }
 
@@ -614,16 +619,19 @@ async fn get_io(mut io: RequestIo, local: &Path) -> Result<u64> {
         let _ = tokio::fs::remove_file(&tmp).await;
     }
 
-    io.finish();
+    io.finish().await;
     result
 }
 
 impl RequestIo {
-    fn finish(&mut self) {
+    async fn finish(&mut self) {
         self.completed = true;
         self.send.finish().ok();
         if self.close_connection {
             self.conn.close(0u8.into(), b"done");
+        }
+        if let Some(endpoint) = self.endpoint.take() {
+            endpoint.close().await;
         }
     }
 }
@@ -637,6 +645,13 @@ impl Drop for RequestIo {
         self.recv.stop(1u8.into()).ok();
         if self.close_connection {
             self.conn.close(1u8.into(), b"cancelled");
+        }
+        if let Some(endpoint) = self.endpoint.take()
+            && let Ok(handle) = tokio::runtime::Handle::try_current()
+        {
+            handle.spawn(async move {
+                endpoint.close().await;
+            });
         }
     }
 }
