@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.2] — 2026-06-19
+
+### Fixed
+
+- Remove `--locked` from CI and release workflows to allow cross-platform dependency resolution (macOS, Windows, Linux).
+
 ## [0.3.1] — 2026-06-19
 
 ### Fixed
